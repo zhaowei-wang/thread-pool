@@ -38,29 +38,11 @@ public:
   class lock
   {
   public:
-    lock() : alias_mutex_(nullptr)
-    {
-      host::smutex_.lock();
-    }
-    
-    lock(host &h)
-    {
-      alias_mutex_ = &h.mutex_;
-      alias_mutex_->lock();
-    }
-    
-    ~lock()
-    {
-      alias_mutex_->unlock();
-      host::smutex_.unlock();
-    }
-
-  private:
-    std::mutex *alias_mutex_;
+    lock() { host::smutex_.lock(); }
+    ~lock() { host::smutex_.unlock(); }
   };
 
 private:
-  std::mutex mutex_;
   static std::mutex smutex_;  
 };
 
