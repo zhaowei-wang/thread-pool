@@ -40,7 +40,7 @@ public:
   public:
     lock() : alias_mutex_(nullptr)
     {
-      smutex_.lock();
+      host::smutex_.lock();
     }
     
     lock(host &h)
@@ -52,17 +52,20 @@ public:
     ~lock()
     {
       alias_mutex_->unlock();
-      smutex_.unlock();
+      host::smutex_.unlock();
     }
 
   private:
     std::mutex *alias_mutex_;
   };
-  
+
 private:
   std::mutex mutex_;
   static std::mutex smutex_;  
 };
+
+template <class host>
+std::mutex class_lockable<host>::smutex_;
 
 template <class host>
 class not_lockable
@@ -81,19 +84,17 @@ end
  */
 
 /*
-Work scheduler
+Work: class and its specializations represent units of work, to be
+executed concurrently
  */
 template <class work_t, class arg_t, class callback_t>
 class work
 {
 public:
-  work() : unit(nullptr), arg(nullptr), callback(nullptr) {}
+  work() {}
   work(work_t u, arg_t a, callback_t c) : unit(u), arg(a), callback(c) {}
+  void operator()() { callback(work(arg)); }
   
-  void operator()()
-  {
-    callback(work(arg));
-  }
 private:
   work_t unit;
   arg_t arg;
@@ -104,28 +105,52 @@ template<class work_t>
 class work<work_t, void, void>
 {
 public:
-  work() : unit(nullptr) {}
-  work(work_t u) : unit(u) {}
+  work() {}
+  work(work_t u) : unit_(u) {}
+  void operator()() { unit_(); }
   
-  void operator()()
-  {
-    unit();
-  }
 private:
-  work_t unit;
+  work_t unit_;
+};
+
+template<class work_t, class arg_t>
+class work<work_t, arg_t, void>
+{
+public:
+  work() {}
+  work(work_t u, arg_t a) : unit_(u), arg_(a) {}
+
+  void operator()() { unit_(arg_); }
+  
+private:
+  work_t unit_;
+  arg_t arg_;
+};
+
+template<class work_t, class callback_t>
+class work <work_t, void, callback_t>
+{
+public:
+  work() {}
+  work(work_t u, callback_t c) : unit_(u), callback_(c) {}
+  void operator()() { callback_(unit_()); }
+  
+private:
+  work_t unit_;
+  callback_t callback_;
 };
 /*
 end
  */
 
-class concurrent_int : public object_lockable<concurrent_int>
+class concurrent_int : public class_lockable<concurrent_int>
 {
 public:
   concurrent_int() : i(0) {};
   
   void increment()
   {
-    lock l(*this);
+    lock l;
     i++;
   }
 
