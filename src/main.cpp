@@ -2,6 +2,7 @@
 #include <memory>
 #include <thread>
 #include <mutex>
+#include <deque>
 
 #define WORK_POOL_COUNT 4
 
@@ -26,7 +27,7 @@ public:
     std::mutex *alias_mutex_;
   };
   
-private:
+protected:
   std::mutex mutex_;
 };
 
@@ -38,11 +39,11 @@ public:
   class lock
   {
   public:
-    lock() { host::smutex_.lock(); }
+    lock()  { host::smutex_.lock();   }
     ~lock() { host::smutex_.unlock(); }
   };
 
-private:
+protected:
   static std::mutex smutex_;  
 };
 
@@ -125,35 +126,65 @@ private:
 end
  */
 
-class concurrent_int : public class_lockable<concurrent_int>
+/*
+Concurrent Queue: queue with object level locking
+ */
+template <class T>
+class cqueue : public object_lockable<cqueue<T>>
 {
 public:
-  concurrent_int() : i(0) {};
+  cqueue() : q(std::deque<T>()) {}
   
-  void increment()
+  void enq(T a)
   {
-    lock l;
-    i++;
+    olock l(*this);
+    q.push_front(a);
   }
 
-  int value() { return i; }
-  
+  void deq()
+  {
+    olock l(*this);
+    q.pop_back();
+  }
+
+  T peek()
+  {
+    olock l(*this);
+    return q.back();
+  }
+
+  size_t size() { return q.size(); }
 private:
-  int i;
+ std::deque<T> q;
+ using olock = typename object_lockable<cqueue<T>>::lock;
 };
+/*
+end
+ */
+
+/*
+Work Scheduler: assigns work to each thread, one queue per thread to reduce thread contention.
+ */
+class scheduler
+{
+
+};
+/*
+end
+*/
 
 int main(int argc, char * argv[])
 {
   std::thread threads[WORK_POOL_COUNT];
   work<std::function<void()>, void, void> to_do[WORK_POOL_COUNT];
 
-  concurrent_int ci;
-  int N = 1000000;
+  cqueue<size_t> q;
+  int N = 10;
   
   std::function<void()> f = [&] ()
 	   {
 	     for (size_t i = 0; i < N; ++i)
-	       ci.increment();
+	       q.enq(i);
 	   };
   
   for (size_t i = 0; i < WORK_POOL_COUNT; ++i)
@@ -167,8 +198,11 @@ int main(int argc, char * argv[])
   for (size_t i = 0; i < WORK_POOL_COUNT; ++i)
     threads[i].join();
 
-  std::cout << "expected " << WORK_POOL_COUNT * N << " ";
-  std::cout << "got " << ci.value() << std::endl;
+  while (q.size() > 0)
+  {
+    std::cout << q.peek() << std::endl;
+    q.deq();
+  }
   
   return 0;
 }
