@@ -3,6 +3,7 @@
 #include <thread>
 #include <mutex>
 #include <deque>
+#include <vector>
 
 #define WORK_POOL_COUNT 4
 
@@ -19,16 +20,16 @@ public:
   public:
     lock(host &h)
     {
-      alias_mutex_ = &h.mutex_;
-      alias_mutex_->lock();
+      _alias_mutex = &h._mutex;
+      _alias_mutex->lock();
     }
-    ~lock() { alias_mutex_->unlock(); }
+    ~lock() { _alias_mutex->unlock(); }
   private:
-    std::mutex *alias_mutex_;
+    std::mutex *_alias_mutex;
   };
   
 protected:
-  std::mutex mutex_;
+  std::mutex _mutex;
 };
 
 template <class host>
@@ -39,16 +40,16 @@ public:
   class lock
   {
   public:
-    lock()  { host::smutex_.lock();   }
-    ~lock() { host::smutex_.unlock(); }
+    lock()  { host::s_mutex.lock();   }
+    ~lock() { host::s_mutex.unlock(); }
   };
 
 protected:
-  static std::mutex smutex_;  
+  static std::mutex s_mutex;  
 };
 
 template <class host>
-std::mutex class_lockable<host>::smutex_;
+std::mutex class_lockable<host>::s_mutex;
 
 template <class host>
 class not_lockable
@@ -67,60 +68,41 @@ end
  */
 
 /*
-Work: class and its specializations represent units of work, to be
-executed concurrently
+work: functor storing a function and its arguements for delayed
+execution
  */
-template <class work_t, class arg_t, class callback_t>
+
+//helper to unpack std::tuple 
+template <int ...>
+struct seq {};
+
+template <int N, int ...S>
+struct generator : generator<N-1, N-1, S...> {};
+
+template <int ...S>
+struct generator<0, S...> { typedef seq<S...> type; }; // base case
+
+template <class function_t, class ...args_t>
 class work
 {
 public:
-  work() {}
-  work(work_t u, arg_t a, callback_t c) : unit(u), arg(a), callback(c) {}
-  void operator()() { callback(work(arg)); }
+  work(function_t f, args_t... args)
+    : _f(f), _args(std::forward<args_t>(args)...) {}
+
+  auto operator()()
+  {
+    return execute_f(typename generator<sizeof...(args_t)>::type());
+  }
   
 private:
-  work_t unit;
-  arg_t arg;
-  callback_t callback;
-};
+  function_t _f;
+  std::tuple<args_t...> _args;
 
-template<class work_t>
-class work<work_t, void, void>
-{
-public:
-  work() {}
-  work(work_t u) : unit_(u) {}
-  void operator()() { unit_(); }
-  
-private:
-  work_t unit_;
-};
-
-template<class work_t, class arg_t>
-class work<work_t, arg_t, void>
-{
-public:
-  work() {}
-  work(work_t u, arg_t a) : unit_(u), arg_(a) {}
-
-  void operator()() { unit_(arg_); }
-  
-private:
-  work_t unit_;
-  arg_t arg_;
-};
-
-template<class work_t, class callback_t>
-class work <work_t, void, callback_t>
-{
-public:
-  work() {}
-  work(work_t u, callback_t c) : unit_(u), callback_(c) {}
-  void operator()() { callback_(unit_()); }
-  
-private:
-  work_t unit_;
-  callback_t callback_;
+  template <int ...S>
+  auto execute_f(seq<S...>)
+  {
+    return _f(std::get<S>(_args)...);
+  }
 };
 /*
 end
@@ -163,11 +145,14 @@ end
  */
 
 /*
-Work Scheduler: assigns work to each thread, one queue per thread to reduce thread contention.
+scheduler: wraps std::thread with a future/promise model
  */
 class scheduler
 {
-
+public:
+  scheduler() {}
+  
+private:
 };
 /*
 end
@@ -176,33 +161,24 @@ end
 int main(int argc, char * argv[])
 {
   std::thread threads[WORK_POOL_COUNT];
-  work<std::function<void()>, void, void> to_do[WORK_POOL_COUNT];
 
   cqueue<size_t> q;
-  int N = 10;
+  int N = 10000000;
+  std::atomic<int> sum{0};
   
-  std::function<void()> f = [&] ()
+  auto f = [&] () mutable
 	   {
 	     for (size_t i = 0; i < N; ++i)
-	       q.enq(i);
+	       sum += 1;
 	   };
-  
+    
   for (size_t i = 0; i < WORK_POOL_COUNT; ++i)
-  {
-    to_do[i] = work<std::function<void()>, void, void>(f);
-  }
-  
-  for (size_t i = 0; i < WORK_POOL_COUNT; ++i)
-    threads[i] = std::thread(to_do[i]);
+    threads[i] = std::thread(work<decltype(f)>(f));
 
   for (size_t i = 0; i < WORK_POOL_COUNT; ++i)
     threads[i].join();
 
-  while (q.size() > 0)
-  {
-    std::cout << q.peek() << std::endl;
-    q.deq();
-  }
+  std::cout << sum << std::endl;
   
   return 0;
 }
